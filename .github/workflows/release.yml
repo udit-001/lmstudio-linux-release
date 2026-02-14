@@ -1,0 +1,129 @@
+name: LM Studio Release
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  check-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Fetch LM Studio version info
+        id: fetch-lmstudio
+        run: |
+          # Get redirect URLs to extract version info
+          x64_appimage_redirect=$(curl -sI "https://lmstudio.ai/download/latest/linux/x64?format=AppImage" | grep -i "^location:" | cut -d' ' -f2 | tr -d '\r')
+          x64_deb_redirect=$(curl -sI "https://lmstudio.ai/download/latest/linux/x64?format=deb" | grep -i "^location:" | cut -d' ' -f2 | tr -d '\r')
+          arm64_appimage_redirect=$(curl -sI "https://lmstudio.ai/download/latest/linux/arm64?format=AppImage" | grep -i "^location:" | cut -d' ' -f2 | tr -d '\r')
+          arm64_deb_redirect=$(curl -sI "https://lmstudio.ai/download/latest/linux/arm64?format=deb" | grep -i "^location:" | cut -d' ' -f2 | tr -d '\r')
+
+          # Extract version from URL (e.g., https://installers.lmstudio.ai/linux/x64/0.4.2-2/LM-Studio-0.4.2-2-x64.AppImage)
+          version=$(echo "$x64_appimage_redirect" | grep -oP '(?<=/linux/x64/)[^/]+')
+
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "x64_appimage_url=$x64_appimage_redirect" >> $GITHUB_OUTPUT
+          echo "x64_deb_url=$x64_deb_redirect" >> $GITHUB_OUTPUT
+          echo "arm64_appimage_url=$arm64_appimage_redirect" >> $GITHUB_OUTPUT
+          echo "arm64_deb_url=$arm64_deb_redirect" >> $GITHUB_OUTPUT
+
+          echo "Detected version: $version"
+
+      - name: Check if version already exists
+        id: check-release
+        run: |
+          if gh release view "v${{ steps.fetch-lmstudio.outputs.version }}" --repo $GITHUB_REPOSITORY >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Release already exists. Skipping."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download LM Studio x64 AppImage
+        if: steps.check-release.outputs.exists == 'false'
+        run: |
+          curl -L -o LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-x64.AppImage "${{ steps.fetch-lmstudio.outputs.x64_appimage_url }}"
+          chmod +x LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-x64.AppImage
+
+      - name: Download LM Studio x64 DEB
+        if: steps.check-release.outputs.exists == 'false'
+        run: |
+          curl -L -o LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-x64.deb "${{ steps.fetch-lmstudio.outputs.x64_deb_url }}"
+
+      - name: Download LM Studio arm64 AppImage
+        if: steps.check-release.outputs.exists == 'false'
+        run: |
+          curl -L -o LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-arm64.AppImage "${{ steps.fetch-lmstudio.outputs.arm64_appimage_url }}"
+          chmod +x LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-arm64.AppImage
+
+      - name: Download LM Studio arm64 DEB
+        if: steps.check-release.outputs.exists == 'false'
+        run: |
+          curl -L -o LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-arm64.deb "${{ steps.fetch-lmstudio.outputs.arm64_deb_url }}"
+
+      - name: Create GitHub Release
+        if: steps.check-release.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.fetch-lmstudio.outputs.version }}
+          name: LM Studio ${{ steps.fetch-lmstudio.outputs.version }}
+          body: |
+            Automated release of LM Studio ${{ steps.fetch-lmstudio.outputs.version }} for Linux
+            
+            ## Downloads
+            | Architecture | AppImage | DEB |
+            |--------------|----------|-----|
+            | x64 (AMD/Intel) | `LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-x64.AppImage` | `LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-x64.deb` |
+            | ARM64 | `LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-arm64.AppImage` | `LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-arm64.deb` |
+          files: |
+            LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-x64.AppImage
+            LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-x64.deb
+            LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-arm64.AppImage
+            LM-Studio-${{ steps.fetch-lmstudio.outputs.version }}-arm64.deb
+
+      - name: Set last release and run timestamps
+        id: set-timestamps
+        run: |
+          current_timestamp=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+          # If a release exists, use the current timestamp for Last Released On
+          if [[ "${{ steps.check-release.outputs.exists }}" == "false" ]]; then
+            release_timestamp=$current_timestamp
+          else
+            # Otherwise, read the last released timestamp from README.md
+            release_timestamp=$(grep -oP '(?<=\*\*⏳ Last Released On\*\*: ).*' README.md)
+          fi
+
+          # Set both the timestamps in environment variables for the next steps
+          echo "last_run=$current_timestamp" >> $GITHUB_ENV
+          echo "last_release=$release_timestamp" >> $GITHUB_ENV
+
+      - name: Update README with timestamps
+        run: |
+          # Remove any old status info
+          sed -i '/^## 📅 Release Status/,/^$/d' README.md
+
+          # Add the updated status info
+          echo -e "## 📅 Release Status" >> README.md
+          echo -e "- **⏳ Last Released On**: ${{ env.last_release }}" >> README.md
+          echo -e "- **🔄 Last Run**: ${{ env.last_run }}" >> README.md
+
+      - name: Commit and push README update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet; then
+            echo "README unchanged, skipping commit."
+          else
+            git add README.md
+            git commit -m "📝 Update timestamps in README [workflow]"
+            git push
+          fi
