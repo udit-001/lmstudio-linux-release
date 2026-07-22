@@ -53,5 +53,5 @@ To automate updates for your LM Studio AppImage on Linux, use [Gear Lever](https
 These URLs will allow automatic fetching of the latest releases. For more detailed instructions, refer to the [update guide](https://mijorus.it/posts/gearlever/update-url-info/).
 
 ## 📅 Release Status
-- **⏳ Last Released On**: 2026-07-08 02:46:44 UTC
-- **🔄 Last Run**: 2026-07-21 02:44:28 UTC
+- **⏳ Last Released On**: 2026-07-22 02:43:35 UTC
+- **🔄 Last Run**: 2026-07-22 02:43:35 UTC
